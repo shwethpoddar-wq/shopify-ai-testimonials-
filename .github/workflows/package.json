@@ -1,11 +1,7 @@
 {
   "name": "shopify-ai-testimonials",
   "version": "1.0.0",
-  "description": "AI Testimonial Generator for Shopify using Gemini",
-  "main": "api/index.js",
-  "scripts": {
-    "start": "node api/index.js"
-  },
+  "description": "AI Testimonial Generator for Shopify",
   "dependencies": {
     "axios": "^1.6.2"
   },
