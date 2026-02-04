@@ -1,10 +1,9 @@
 import axios from 'axios';
 
 const FREE_MODELS = [
-  'qwen/qwen-2.5-7b-instruct:free',
-  'meta-llama/llama-3.2-3b-instruct:free',
-  'meta-llama/llama-3.2-1b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'meta-llama/llama-3.1-8b-instruct:free',
+  'microsoft/phi-3-mini-128k-instruct:free',
   'google/gemma-2-9b-it:free'
 ];
 
@@ -12,41 +11,31 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function generateWithRetry(prompt, apiKey) {
   for (const model of FREE_MODELS) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await axios.post(
-          'https://openrouter.ai/api/v1/chat/completions',
-          {
-            model: model,
-            messages: [{ role: 'user', content: prompt }],
-            max_tokens: 200,
-            temperature: 0.9
+    try {
+      const response = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 200,
+          temperature: 0.9
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://shopify.com',
+            'X-Title': 'Shopify AI Testimonials'
           },
-          {
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://shopify.com',
-              'X-Title': 'Shopify AI Testimonials'
-            },
-            timeout: 30000
-          }
-        );
+          timeout: 60000
+        }
+      );
 
-        const content = response.data.choices?.[0]?.message?.content;
-        if (content) {
-          return { success: true, content, model };
-        }
-      } catch (error) {
-        if (error.response?.status === 429) {
-          await delay(5000);
-          continue;
-        }
-        if (error.response?.status === 404) {
-          break;
-        }
-        await delay(2000);
-      }
+      const content = response.data.choices?.[0]?.message?.content;
+      if (content) return { success: true, content, model };
+    } catch (error) {
+      if (error.response?.status === 429) await delay(3000);
+      continue;
     }
   }
   return { success: false };
@@ -67,23 +56,14 @@ export default async function handler(req, res) {
 
   try {
     const product = req.body;
+    if (!product?.id) return res.status(200).json({ error: 'No product data' });
 
-    if (!product?.id) {
-      return res.status(200).json({ error: 'No product data' });
-    }
-
-    const description = product.body_html?.replace(/<[^>]*>/g, '') || '';
-
-    const prompt = `Generate Indian customer testimonial for: ${product.title}. ${description}
-
-Rules: Hinglish, 2-3 lines, natural, positive, no emojis.
-
-Generate ONE testimonial only:`;
+    const prompt = `Write a short Hinglish review for: ${product.title}. 2-3 sentences, positive, no emojis.`;
 
     const result = await generateWithRetry(prompt, OPENROUTER_API_KEY);
 
     if (result.success) {
-      let testimonial = result.content.replace(/^["'\*]|["'\*]$/g, '').trim();
+      let testimonial = result.content.replace(/^["'`\*]+|["'`\*]+$/g, '').trim();
 
       await axios.post(
         `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${product.id}/metafields.json`,
@@ -106,7 +86,7 @@ Generate ONE testimonial only:`;
       return res.status(200).json({ success: true, testimonial, model: result.model });
     }
 
-    return res.status(200).json({ success: false, error: 'All models failed' });
+    return res.status(200).json({ success: false });
 
   } catch (error) {
     return res.status(200).json({ error: error.message });
