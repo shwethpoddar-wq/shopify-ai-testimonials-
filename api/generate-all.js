@@ -1,53 +1,46 @@
 import axios from 'axios';
 
 const FREE_MODELS = [
-  'qwen/qwen-2.5-7b-instruct:free',
-  'meta-llama/llama-3.2-3b-instruct:free',
-  'meta-llama/llama-3.2-1b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
+  'meta-llama/llama-3.1-8b-instruct:free',
+  'microsoft/phi-3-mini-128k-instruct:free',
   'google/gemma-2-9b-it:free',
-  'openchat/openchat-7b:free'
+  'qwen/qwen-2-7b-instruct:free'
 ];
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function generateWithRetry(prompt, apiKey) {
   for (const model of FREE_MODELS) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await axios.post(
-          'https://openrouter.ai/api/v1/chat/completions',
-          {
-            model: model,
-            messages: [{ role: 'user', content: prompt }],
-            max_tokens: 200,
-            temperature: 0.9
+    try {
+      const response = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 200,
+          temperature: 0.9
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://shopify.com',
+            'X-Title': 'Shopify AI Testimonials'
           },
-          {
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': 'https://shopify.com',
-              'X-Title': 'Shopify AI Testimonials'
-            },
-            timeout: 30000
-          }
-        );
+          timeout: 60000
+        }
+      );
 
-        const content = response.data.choices?.[0]?.message?.content;
-        if (content) {
-          return { success: true, content, model };
-        }
-      } catch (error) {
-        if (error.response?.status === 429) {
-          await delay(5000);
-          continue;
-        }
-        if (error.response?.status === 404) {
-          break;
-        }
-        await delay(2000);
+      const content = response.data.choices?.[0]?.message?.content;
+      if (content && content.trim().length > 10) {
+        return { success: true, content, model };
       }
+    } catch (error) {
+      if (error.response?.status === 429) {
+        await delay(5000);
+      }
+      continue;
     }
   }
   return { success: false };
@@ -66,10 +59,8 @@ export default async function handler(req, res) {
 
   try {
     const productsRes = await axios.get(
-      `https://${SHOPIFY_STORE}/admin/api/2024-01/products.json?limit=50`,
-      {
-        headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN }
-      }
+      `https://${SHOPIFY_STORE}/admin/api/2024-01/products.json?limit=25`,
+      { headers: { 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN } }
     );
 
     const products = productsRes.data.products;
@@ -79,20 +70,12 @@ export default async function handler(req, res) {
       const product = products[i];
 
       try {
-        const description = product.body_html?.replace(/<[^>]*>/g, '') || '';
-
-        const prompt = `Generate Indian customer testimonial for: ${product.title}. ${description}
-
-Rules: Hinglish (Hindi+English in Roman script), 2-3 lines, natural, positive, no emojis/hashtags.
-
-Example: Bahut accha product hai yaar! Quality first class.
-
-Generate ONE testimonial only:`;
+        const prompt = `Write a short Hinglish customer review for: ${product.title}. Keep it 2-3 sentences, positive, natural. No emojis. Example: Bahut accha product hai! Quality mast hai.`;
 
         const result = await generateWithRetry(prompt, OPENROUTER_API_KEY);
 
         if (result.success) {
-          let testimonial = result.content.replace(/^["'\*]|["'\*]$/g, '').trim();
+          let testimonial = result.content.replace(/^["'`\*]+|["'`\*]+$/g, '').trim();
 
           const metafieldsRes = await axios.get(
             `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${product.id}/metafields.json`,
@@ -122,19 +105,12 @@ Generate ONE testimonial only:`;
             );
           }
 
-          results.push({
-            id: product.id,
-            title: product.title,
-            testimonial,
-            model: result.model,
-            success: true
-          });
+          results.push({ id: product.id, title: product.title, testimonial, model: result.model, success: true });
         } else {
-          results.push({ id: product.id, title: product.title, success: false, error: 'Generation failed' });
+          results.push({ id: product.id, title: product.title, success: false });
         }
 
-        // Wait between products to avoid rate limits
-        await delay(3000);
+        await delay(5000);
 
       } catch (err) {
         results.push({ id: product.id, title: product.title, error: err.message, success: false });
@@ -145,9 +121,6 @@ Generate ONE testimonial only:`;
 
     return res.status(200).json({
       message: `Generated ${successCount}/${products.length} testimonials`,
-      total: products.length,
-      success: successCount,
-      failed: products.length - successCount,
       results
     });
 
