@@ -7,14 +7,14 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
   const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
   const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-  if (!GEMINI_API_KEY || !SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
+  if (!OPENROUTER_API_KEY || !SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
     return res.status(500).json({
       error: 'Missing environment variables',
-      required: ['GEMINI_API_KEY', 'SHOPIFY_STORE', 'SHOPIFY_ACCESS_TOKEN']
+      required: ['OPENROUTER_API_KEY', 'SHOPIFY_STORE', 'SHOPIFY_ACCESS_TOKEN']
     });
   }
 
@@ -28,6 +28,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Get product from Shopify
     const productRes = await axios.get(
       `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}.json`,
       {
@@ -52,17 +53,30 @@ RULES:
 
 Example: Bahut accha product hai yaar! Quality first class. Delivery bhi fast thi.
 
-Generate ONE testimonial:`;
+Generate ONE testimonial only:`;
 
-    const geminiRes = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+    // Call OpenRouter API
+    const aiRes = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
       {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.9, maxOutputTokens: 200 }
+        model: 'google/gemma-3-1b-it:free',
+        messages: [
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: 200,
+        temperature: 0.9
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://shopify.com',
+          'X-Title': 'Shopify AI Testimonials'
+        }
       }
     );
 
-    let testimonial = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    let testimonial = aiRes.data.choices?.[0]?.message?.content || null;
 
     if (!testimonial) {
       return res.status(500).json({ error: 'Failed to generate testimonial' });
@@ -70,6 +84,7 @@ Generate ONE testimonial:`;
 
     testimonial = testimonial.replace(/^["']|["']$/g, '').trim();
 
+    // Check for existing metafield
     const metafieldsRes = await axios.get(
       `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}/metafields.json`,
       {
