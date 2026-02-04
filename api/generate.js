@@ -1,8 +1,94 @@
 import axios from 'axios';
 
+// List of free models to try (in order)
+const FREE_MODELS = [
+  'qwen/qwen-2.5-7b-instruct:free',
+  'meta-llama/llama-3.2-3b-instruct:free',
+  'meta-llama/llama-3.2-1b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
+  'google/gemma-2-9b-it:free',
+  'openchat/openchat-7b:free',
+  'huggingfaceh4/zephyr-7b-beta:free',
+  'undi95/toppy-m-7b:free'
+];
+
+// Delay function
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Try generating with multiple models
+async function generateWithRetry(prompt, apiKey, maxRetries = 3) {
+  let lastError = null;
+
+  for (const model of FREE_MODELS) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`Trying model: ${model} (attempt ${attempt})`);
+
+        const response = await axios.post(
+          'https://openrouter.ai/api/v1/chat/completions',
+          {
+            model: model,
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 200,
+            temperature: 0.9
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://shopify.com',
+              'X-Title': 'Shopify AI Testimonials'
+            },
+            timeout: 30000
+          }
+        );
+
+        const content = response.data.choices?.[0]?.message?.content;
+
+        if (content) {
+          console.log(`Success with model: ${model}`);
+          return {
+            success: true,
+            content: content,
+            model: model
+          };
+        }
+      } catch (error) {
+        lastError = error;
+        const status = error.response?.status;
+        const errorMessage = error.response?.data?.error?.message || error.message;
+
+        console.log(`Error with ${model}: ${status} - ${errorMessage}`);
+
+        // If rate limited, wait and retry same model
+        if (status === 429) {
+          console.log(`Rate limited. Waiting 5 seconds...`);
+          await delay(5000);
+          continue;
+        }
+
+        // If model not found, try next model
+        if (status === 404) {
+          break;
+        }
+
+        // For other errors, wait briefly and retry
+        if (attempt < maxRetries) {
+          await delay(2000);
+        }
+      }
+    }
+  }
+
+  return {
+    success: false,
+    error: lastError?.response?.data || lastError?.message || 'All models failed'
+  };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  
+
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -49,42 +135,32 @@ RULES:
 - Keep it 2-3 lines only
 - Sound natural like a real customer
 - Be enthusiastic and positive
-- NO emojis, NO hashtags, NO quotes
+- Mention product quality or experience
+- Use words like "yaar", "bhai", "ekdum", "bahut"
+- NO emojis, NO hashtags, NO quotes, NO asterisks
 
-Example: Bahut accha product hai yaar! Quality first class. Delivery bhi fast thi.
+Examples:
+- Bahut accha product hai yaar! Quality ekdum first class. Delivery bhi fast thi.
+- Mujhe toh bahut pasand aaya bhai. Value for money hai definitely.
+- Kya baat hai! Product dekh ke dil khush ho gaya. Highly recommended.
 
-Generate ONE testimonial only:`;
+Generate ONE testimonial only (just the text, nothing else):`;
 
-    // Call OpenRouter API
-    const aiRes = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: 'meta-llama/llama-3.2-3b-instruct:free',
-        messages: [
-          { role: 'user', content: prompt }
-        ],
-        max_tokens: 200,
-        temperature: 0.9
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://shopify.com',
-          'X-Title': 'Shopify AI Testimonials'
-        }
-      }
-    );
+    // Generate testimonial with auto-retry
+    const result = await generateWithRetry(prompt, OPENROUTER_API_KEY);
 
-    let testimonial = aiRes.data.choices?.[0]?.message?.content || null;
-
-    if (!testimonial) {
-      return res.status(500).json({ error: 'Failed to generate testimonial' });
+    if (!result.success) {
+      return res.status(500).json({
+        error: 'Failed to generate testimonial',
+        details: result.error
+      });
     }
 
-    testimonial = testimonial.replace(/^["']|["']$/g, '').trim();
+    let testimonial = result.content;
+    testimonial = testimonial.replace(/^["'\*]|["'\*]$/g, '').trim();
+    testimonial = testimonial.replace(/\*+/g, '').trim();
 
-    // Check for existing metafield
+    // Save to Shopify metafield
     const metafieldsRes = await axios.get(
       `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}/metafields.json`,
       {
@@ -96,18 +172,18 @@ Generate ONE testimonial only:`;
       m => m.namespace === 'custom' && m.key === 'ai_testimonial'
     );
 
+    const shopifyHeaders = {
+      'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+      'Content-Type': 'application/json'
+    };
+
     if (existing) {
       await axios.put(
         `https://${SHOPIFY_STORE}/admin/api/2024-01/metafields/${existing.id}.json`,
         {
           metafield: { id: existing.id, value: testimonial, type: 'multi_line_text_field' }
         },
-        {
-          headers: {
-            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-            'Content-Type': 'application/json'
-          }
-        }
+        { headers: shopifyHeaders }
       );
     } else {
       await axios.post(
@@ -120,12 +196,7 @@ Generate ONE testimonial only:`;
             type: 'multi_line_text_field'
           }
         },
-        {
-          headers: {
-            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-            'Content-Type': 'application/json'
-          }
-        }
+        { headers: shopifyHeaders }
       );
     }
 
@@ -133,7 +204,8 @@ Generate ONE testimonial only:`;
       success: true,
       productId,
       title: product.title,
-      testimonial
+      testimonial,
+      model_used: result.model
     });
 
   } catch (error) {
