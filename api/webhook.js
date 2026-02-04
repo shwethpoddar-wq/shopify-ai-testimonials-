@@ -29,7 +29,7 @@ Generate ONE:`;
     const aiRes = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'google/gemma-3-1b-it:free',
+        model: 'meta-llama/llama-3.2-3b-instruct:free',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 200,
         temperature: 0.9
