@@ -1,25 +1,24 @@
-// api/generate-all.js
-// Generate testimonials for ALL products at once
-
 const axios = require('axios');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+function delay(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
+  });
+}
 
 async function generateTestimonial(productTitle, productDescription) {
-  const prompt = `Generate a realistic Indian customer testimonial for this product.
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  
+  const prompt = `Generate a realistic Indian customer testimonial for: ${productTitle}. ${productDescription || ''}
 
-Product Name: ${productTitle}
-Product Description: ${productDescription || 'A high-quality product'}
+Rules:
+- Write in Hinglish (Hindi + English in Roman script)
+- 2-3 lines only
+- Sound natural, enthusiastic, positive
+- Mention quality or experience
+- NO emojis, NO hashtags, NO quotes, NO labels
 
-RULES:
-- Write in Hinglish (mix of Hindi and English using Roman script)
-- Keep it 2-3 lines only
-- Sound natural like a real customer wrote it
-- Be enthusiastic and positive
-- Mention quality, feeling, or experience
-- NO hashtags, NO emojis, NO quotation marks
+Example: Bahut accha product hai yaar! Quality first class hai aur delivery bhi fast thi.
 
 Generate ONE testimonial:`;
 
@@ -36,13 +35,13 @@ Generate ONE testimonial:`;
           temperature: 0.9,
           topK: 40,
           topP: 0.95,
-          maxOutputTokens: 200,
+          maxOutputTokens: 200
         }
       }
     );
 
     if (response.data.candidates && response.data.candidates[0]) {
-      let testimonial = response.data.candidates[0].content.parts[0].text;
+      var testimonial = response.data.candidates[0].content.parts[0].text;
       testimonial = testimonial.replace(/^["']|["']$/g, '').trim();
       return testimonial;
     }
@@ -54,8 +53,11 @@ Generate ONE testimonial:`;
 }
 
 async function saveToShopify(productId, testimonial) {
+  const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
+  const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+  
   try {
-    const getResponse = await axios.get(
+    var getResponse = await axios.get(
       `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}/metafields.json`,
       {
         headers: {
@@ -64,9 +66,19 @@ async function saveToShopify(productId, testimonial) {
       }
     );
 
-    const existingMetafield = getResponse.data.metafields.find(
-      m => m.namespace === 'custom' && m.key === 'ai_testimonial'
-    );
+    var existingMetafield = null;
+    for (var i = 0; i < getResponse.data.metafields.length; i++) {
+      var m = getResponse.data.metafields[i];
+      if (m.namespace === 'custom' && m.key === 'ai_testimonial') {
+        existingMetafield = m;
+        break;
+      }
+    }
+
+    var headers = {
+      'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+      'Content-Type': 'application/json'
+    };
 
     if (existingMetafield) {
       await axios.put(
@@ -78,12 +90,7 @@ async function saveToShopify(productId, testimonial) {
             type: 'multi_line_text_field'
           }
         },
-        {
-          headers: {
-            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-            'Content-Type': 'application/json'
-          }
-        }
+        { headers: headers }
       );
     } else {
       await axios.post(
@@ -96,25 +103,18 @@ async function saveToShopify(productId, testimonial) {
             type: 'multi_line_text_field'
           }
         },
-        {
-          headers: {
-            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-            'Content-Type': 'application/json'
-          }
-        }
+        { headers: headers }
       );
     }
+    
     return true;
   } catch (error) {
     throw error;
   }
 }
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-module.exports = async (req, res) => {
+module.exports = async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
@@ -122,11 +122,20 @@ module.exports = async (req, res) => {
     return res.status(200).end();
   }
 
+  const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
+  const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+  if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN || !GEMINI_API_KEY) {
+    return res.status(500).json({
+      error: 'Missing environment variables'
+    });
+  }
+
   try {
     console.log('Starting bulk generation...');
 
-    // Get all products
-    const productsResponse = await axios.get(
+    var productsResponse = await axios.get(
       `https://${SHOPIFY_STORE}/admin/api/2024-01/products.json?limit=250`,
       {
         headers: {
@@ -135,31 +144,33 @@ module.exports = async (req, res) => {
       }
     );
 
-    const products = productsResponse.data.products;
-    const results = [];
+    var products = productsResponse.data.products;
+    var results = [];
 
-    console.log(`Found ${products.length} products`);
+    console.log('Found ' + products.length + ' products');
 
-    for (let i = 0; i < products.length; i++) {
-      const product = products[i];
+    for (var i = 0; i < products.length; i++) {
+      var product = products[i];
       
       try {
-        console.log(`[${i + 1}/${products.length}] Processing: ${product.title}`);
+        console.log('[' + (i + 1) + '/' + products.length + '] Processing: ' + product.title);
 
-        const testimonial = await generateTestimonial(
-          product.title,
-          product.body_html?.replace(/<[^>]*>/g, '')
-        );
+        var description = '';
+        if (product.body_html) {
+          description = product.body_html.replace(/<[^>]*>/g, '');
+        }
+
+        var testimonial = await generateTestimonial(product.title, description);
 
         if (testimonial) {
           await saveToShopify(product.id, testimonial);
           results.push({
             id: product.id,
             title: product.title,
-            testimonial,
+            testimonial: testimonial,
             success: true
           });
-          console.log(`✅ Done: ${product.title}`);
+          console.log('Done: ' + product.title);
         } else {
           results.push({
             id: product.id,
@@ -169,11 +180,10 @@ module.exports = async (req, res) => {
           });
         }
 
-        // Wait 1.5 seconds between requests to avoid rate limits
         await delay(1500);
 
       } catch (error) {
-        console.error(`❌ Error for ${product.title}:`, error.message);
+        console.error('Error for ' + product.title + ':', error.message);
         results.push({
           id: product.id,
           title: product.title,
@@ -183,15 +193,25 @@ module.exports = async (req, res) => {
       }
     }
 
-    const successCount = results.filter(r => r.success).length;
-    
+    var successCount = 0;
+    for (var j = 0; j < results.length; j++) {
+      if (results[j].success) {
+        successCount++;
+      }
+    }
+
     return res.status(200).json({
-      message: `Generated ${successCount}/${products.length} testimonials`,
-      results
+      message: 'Generated ' + successCount + '/' + products.length + ' testimonials',
+      total: products.length,
+      success: successCount,
+      failed: products.length - successCount,
+      results: results
     });
 
   } catch (error) {
     console.error('Bulk Error:', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ 
+      error: error.message 
+    });
   }
 };
