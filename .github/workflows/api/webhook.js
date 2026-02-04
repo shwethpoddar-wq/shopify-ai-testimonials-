@@ -1,31 +1,20 @@
-// api/webhook.js
-// Webhook endpoint for automatic generation on product create
-
 const axios = require('axios');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-
 async function generateTestimonial(productTitle, productDescription) {
-  const prompt = `Generate a realistic Indian customer testimonial for this product.
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  
+  const prompt = `Generate a realistic Indian customer testimonial for: ${productTitle}. ${productDescription || ''}
 
-Product Name: ${productTitle}
-Product Description: ${productDescription || 'A high-quality product'}
-
-RULES:
-- Write in Hinglish (mix of Hindi and English using Roman script)
-- Keep it 2-3 lines only
-- Sound natural like a real customer wrote it
-- Be enthusiastic and positive
-- Mention quality, feeling, or experience
-- Use common Indian expressions
-- NO hashtags, NO emojis, NO quotation marks
+Rules:
+- Write in Hinglish (Hindi + English in Roman script)
+- 2-3 lines only
+- Sound natural, enthusiastic, positive
+- NO emojis, NO hashtags, NO quotes
 
 Generate ONE testimonial:`;
 
   try {
-    const response = await axios.post(
+    var response = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [{
@@ -37,68 +26,91 @@ Generate ONE testimonial:`;
           temperature: 0.9,
           topK: 40,
           topP: 0.95,
-          maxOutputTokens: 200,
+          maxOutputTokens: 200
         }
       }
     );
 
     if (response.data.candidates && response.data.candidates[0]) {
-      let testimonial = response.data.candidates[0].content.parts[0].text;
+      var testimonial = response.data.candidates[0].content.parts[0].text;
       testimonial = testimonial.replace(/^["']|["']$/g, '').trim();
       return testimonial;
     }
     return null;
   } catch (error) {
-    console.error('Gemini Error:', error.response?.data || error.message);
+    console.error('Gemini Error:', error.message);
     return null;
   }
 }
 
-async function saveToShopify(productId, testimonial) {
-  await axios.post(
-    `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}/metafields.json`,
-    {
-      metafield: {
-        namespace: 'custom',
-        key: 'ai_testimonial',
-        value: testimonial,
-        type: 'multi_line_text_field'
-      }
-    },
-    {
-      headers: {
-        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-}
-
-module.exports = async (req, res) => {
+module.exports = async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+  
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+  }
+
+  const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
+  const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+  if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN || !GEMINI_API_KEY) {
+    return res.status(200).json({ error: 'Missing environment variables' });
   }
 
   try {
-    const product = req.body;
+    var product = req.body;
     
-    console.log(`Webhook received for product: ${product.title} (ID: ${product.id})`);
-
-    // Generate testimonial
-    const testimonial = await generateTestimonial(
-      product.title,
-      product.body_html?.replace(/<[^>]*>/g, '')
-    );
-
-    if (testimonial) {
-      await saveToShopify(product.id, testimonial);
-      console.log(`✅ Saved testimonial for: ${product.title}`);
-      return res.status(200).json({ success: true, testimonial });
+    if (!product || !product.id) {
+      return res.status(200).json({ error: 'No product data received' });
     }
 
-    return res.status(200).json({ success: false, message: 'Could not generate' });
+    console.log('Webhook received for product:', product.title, '(ID:', product.id, ')');
+
+    var description = '';
+    if (product.body_html) {
+      description = product.body_html.replace(/<[^>]*>/g, '');
+    }
+
+    var testimonial = await generateTestimonial(product.title, description);
+
+    if (testimonial) {
+      await axios.post(
+        `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${product.id}/metafields.json`,
+        {
+          metafield: {
+            namespace: 'custom',
+            key: 'ai_testimonial',
+            value: testimonial,
+            type: 'multi_line_text_field'
+          }
+        },
+        {
+          headers: {
+            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      console.log('Saved testimonial for:', product.title);
+      
+      return res.status(200).json({ 
+        success: true, 
+        productId: product.id,
+        testimonial: testimonial
+      });
+    }
+
+    return res.status(200).json({ 
+      success: false, 
+      message: 'Could not generate testimonial' 
+    });
+
   } catch (error) {
-    console.error('Webhook Error:', error);
-    return res.status(200).json({ error: error.message });
+    console.error('Webhook Error:', error.message);
+    return res.status(200).json({ 
+      error: error.message 
+    });
   }
 };
