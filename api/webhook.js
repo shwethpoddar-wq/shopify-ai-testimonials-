@@ -1,80 +1,44 @@
-const axios = require('axios');
+import axios from 'axios';
 
-async function generateTestimonial(productTitle, productDescription) {
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'POST only' });
+  }
+
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  
-  const prompt = `Generate a realistic Indian customer testimonial for: ${productTitle}. ${productDescription || ''}
+  const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
+  const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-Rules:
-- Write in Hinglish (Hindi + English in Roman script)
-- 2-3 lines only
-- Sound natural, enthusiastic, positive
-- NO emojis, NO hashtags, NO quotes
-
-Generate ONE testimonial:`;
+  if (!GEMINI_API_KEY || !SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
+    return res.status(200).json({ error: 'Missing env vars' });
+  }
 
   try {
-    var response = await axios.post(
+    const product = req.body;
+
+    if (!product?.id) {
+      return res.status(200).json({ error: 'No product data' });
+    }
+
+    const description = product.body_html?.replace(/<[^>]*>/g, '') || '';
+
+    const prompt = `Generate Indian customer testimonial for: ${product.title}. ${description}
+Rules: Hinglish, 2-3 lines, natural, positive, no emojis.
+Generate ONE:`;
+
+    const geminiRes = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.9,
-          topK: 40,
-          topP: 0.95,
-          maxOutputTokens: 200
-        }
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.9, maxOutputTokens: 200 }
       }
     );
 
-    if (response.data.candidates && response.data.candidates[0]) {
-      var testimonial = response.data.candidates[0].content.parts[0].text;
-      testimonial = testimonial.replace(/^["']|["']$/g, '').trim();
-      return testimonial;
-    }
-    return null;
-  } catch (error) {
-    console.error('Gemini Error:', error.message);
-    return null;
-  }
-}
-
-module.exports = async function handler(req, res) {
-  res.setHeader('Content-Type', 'application/json');
-  
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed. Use POST.' });
-  }
-
-  const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
-  const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
-  if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN || !GEMINI_API_KEY) {
-    return res.status(200).json({ error: 'Missing environment variables' });
-  }
-
-  try {
-    var product = req.body;
-    
-    if (!product || !product.id) {
-      return res.status(200).json({ error: 'No product data received' });
-    }
-
-    console.log('Webhook received for product:', product.title, '(ID:', product.id, ')');
-
-    var description = '';
-    if (product.body_html) {
-      description = product.body_html.replace(/<[^>]*>/g, '');
-    }
-
-    var testimonial = await generateTestimonial(product.title, description);
+    let testimonial = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (testimonial) {
+      testimonial = testimonial.replace(/^["']|["']$/g, '').trim();
+
       await axios.post(
         `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${product.id}/metafields.json`,
         {
@@ -93,24 +57,12 @@ module.exports = async function handler(req, res) {
         }
       );
 
-      console.log('Saved testimonial for:', product.title);
-      
-      return res.status(200).json({ 
-        success: true, 
-        productId: product.id,
-        testimonial: testimonial
-      });
+      return res.status(200).json({ success: true, testimonial });
     }
 
-    return res.status(200).json({ 
-      success: false, 
-      message: 'Could not generate testimonial' 
-    });
+    return res.status(200).json({ success: false });
 
   } catch (error) {
-    console.error('Webhook Error:', error.message);
-    return res.status(200).json({ 
-      error: error.message 
-    });
+    return res.status(200).json({ error: error.message });
   }
-};
+}
