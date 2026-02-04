@@ -7,11 +7,19 @@ export default async function handler(req, res) {
 
   return res.status(200).json({
     status: 'Debug Info',
-    environment_variables: {
-      OPENROUTER_API_KEY: OPENROUTER_API_KEY ? `✅ Set (${OPENROUTER_API_KEY.slice(0, 10)}...)` : '❌ MISSING',
-      SHOPIFY_STORE: SHOPIFY_STORE ? `✅ Set (${SHOPIFY_STORE})` : '❌ MISSING',
-      SHOPIFY_ACCESS_TOKEN: SHOPIFY_ACCESS_TOKEN ? `✅ Set (${SHOPIFY_ACCESS_TOKEN.slice(0, 10)}...)` : '❌ MISSING'
+    message: 'Environment Variables Check',
+    variables: {
+      OPENROUTER_API_KEY: OPENROUTER_API_KEY 
+        ? '✅ SET (' + OPENROUTER_API_KEY.substring(0, 15) + '...)' 
+        : '❌ MISSING',
+      SHOPIFY_STORE: SHOPIFY_STORE 
+        ? '✅ SET (' + SHOPIFY_STORE + ')' 
+        : '❌ MISSING',
+      SHOPIFY_ACCESS_TOKEN: SHOPIFY_ACCESS_TOKEN 
+        ? '✅ SET (' + SHOPIFY_ACCESS_TOKEN.substring(0, 15) + '...)' 
+        : '❌ MISSING'
     },
+    all_set: !!(OPENROUTER_API_KEY && SHOPIFY_STORE && SHOPIFY_ACCESS_TOKEN),
     timestamp: new Date().toISOString()
   });
 }
