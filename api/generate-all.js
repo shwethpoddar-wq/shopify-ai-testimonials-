@@ -5,11 +5,11 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
   const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
   const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-  if (!GEMINI_API_KEY || !SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
+  if (!OPENROUTER_API_KEY || !SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
     return res.status(500).json({ error: 'Missing environment variables' });
   }
 
@@ -34,15 +34,25 @@ export default async function handler(req, res) {
 Rules: Hinglish, 2-3 lines, natural, positive, no emojis/hashtags.
 Generate ONE:`;
 
-        const geminiRes = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+        const aiRes = await axios.post(
+          'https://openrouter.ai/api/v1/chat/completions',
           {
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.9, maxOutputTokens: 200 }
+            model: 'google/gemma-3-1b-it:free',
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 200,
+            temperature: 0.9
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://shopify.com',
+              'X-Title': 'Shopify AI Testimonials'
+            }
           }
         );
 
-        let testimonial = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text;
+        let testimonial = aiRes.data.choices?.[0]?.message?.content;
 
         if (testimonial) {
           testimonial = testimonial.replace(/^["']|["']$/g, '').trim();
@@ -78,7 +88,7 @@ Generate ONE:`;
           results.push({ id: product.id, title: product.title, testimonial, success: true });
         }
 
-        await delay(5000);
+        await delay(3000);
 
       } catch (err) {
         results.push({ id: product.id, title: product.title, error: err.message, success: false });
