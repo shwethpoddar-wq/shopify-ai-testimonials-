@@ -1,23 +1,45 @@
 import axios from 'axios';
 
-const FREE_MODELS = [
-  'nousresearch/hermes-3-llama-3.1-405b:free',
-  'meta-llama/llama-3.1-8b-instruct:free',
-  'microsoft/phi-3-mini-128k-instruct:free',
-  'google/gemma-2-9b-it:free'
-];
-
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function generateWithRetry(prompt, apiKey) {
-  for (const model of FREE_MODELS) {
+async function getFreeModels(apiKey) {
+  try {
+    const response = await axios.get('https://openrouter.ai/api/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+
+    const models = response.data.data || response.data || [];
+    
+    const freeModels = models.filter(model => {
+      const id = model.id || '';
+      const pricing = model.pricing || {};
+      const promptPrice = parseFloat(pricing.prompt || '1');
+      const completionPrice = parseFloat(pricing.completion || '1');
+      
+      return (promptPrice === 0 && completionPrice === 0) || id.includes(':free');
+    });
+
+    return freeModels.map(m => m.id);
+  } catch (error) {
+    return [
+      'deepseek/deepseek-r1:free',
+      'deepseek/deepseek-chat:free',
+      'google/gemini-2.0-flash-exp:free'
+    ];
+  }
+}
+
+async function generateWithAllModels(prompt, apiKey) {
+  const freeModels = await getFreeModels(apiKey);
+
+  for (const model of freeModels) {
     try {
       const response = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           model: model,
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 200,
+          max_tokens: 250,
           temperature: 0.9
         },
         {
@@ -32,12 +54,15 @@ async function generateWithRetry(prompt, apiKey) {
       );
 
       const content = response.data.choices?.[0]?.message?.content;
-      if (content) return { success: true, content, model };
+      if (content && content.trim().length > 10) {
+        return { success: true, content, model };
+      }
     } catch (error) {
       if (error.response?.status === 429) await delay(3000);
       continue;
     }
   }
+
   return { success: false };
 }
 
@@ -58,9 +83,9 @@ export default async function handler(req, res) {
     const product = req.body;
     if (!product?.id) return res.status(200).json({ error: 'No product data' });
 
-    const prompt = `Write a short Hinglish review for: ${product.title}. 2-3 sentences, positive, no emojis.`;
+    const prompt = `Write a short Hinglish review for: ${product.title}. 2-3 sentences, positive, like a happy Indian customer. No emojis.`;
 
-    const result = await generateWithRetry(prompt, OPENROUTER_API_KEY);
+    const result = await generateWithAllModels(prompt, OPENROUTER_API_KEY);
 
     if (result.success) {
       let testimonial = result.content.replace(/^["'`\*]+|["'`\*]+$/g, '').trim();
@@ -86,7 +111,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, testimonial, model: result.model });
     }
 
-    return res.status(200).json({ success: false });
+    return res.status(200).json({ success: false, error: 'All models failed' });
 
   } catch (error) {
     return res.status(200).json({ error: error.message });
